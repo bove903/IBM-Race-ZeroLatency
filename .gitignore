@@ -219,3 +219,4 @@ __marimo__/
 .vscode/
 .idea/
 .DS_Store
+gym_torcs/vtorcs-RL-color/
