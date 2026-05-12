@@ -2,6 +2,8 @@ from pynput.keyboard import Key, Listener
 import snakeoil3_jm2 as snakeoil3
 import time
 import json
+import os
+
 
 class OptimizedArcadeController:
     def __init__(self):
@@ -15,7 +17,7 @@ class OptimizedArcadeController:
         }
 
         # Parametri di smoothing
-        self.steer_speed_in = 0.06   # Velocità di sterzata
+        self.steer_speed_in = 0.06  # Velocità di sterzata
         self.steer_speed_out = 0.12  # Velocità di ritorno al centro (più veloce)
         self.accel_speed = 0.15
         self.brake_speed = 0.25
@@ -36,19 +38,19 @@ class OptimizedArcadeController:
 
     def update(self, sensors):
         speed = sensors.get('speedX', 0)
-        
+
         # ========================
         # ACCELERATORE & TRACTION CONTROL
         # ========================
         target_accel = 1.0 if Key.up in self.keys else 0.0
         self.state['accel'] += (target_accel - self.state['accel']) * self.accel_speed
-        
+
         # Se le ruote motrici slittano rispetto a quelle anteriori, taglia potenza
-        wheel_spin = ((sensors.get('wheelSpinVel', [0]*4)[2] + sensors.get('wheelSpinVel', [0]*4)[3]) - 
-                      (sensors.get('wheelSpinVel', [0]*4)[0] + sensors.get('wheelSpinVel', [0]*4)[1]))
-        
+        wheel_spin = ((sensors.get('wheelSpinVel', [0] * 4)[2] + sensors.get('wheelSpinVel', [0] * 4)[3]) -
+                      (sensors.get('wheelSpinVel', [0] * 4)[0] + sensors.get('wheelSpinVel', [0] * 4)[1]))
+
         if wheel_spin > 2.0 and self.state['accel'] > 0:
-            self.state['accel'] -= 0.15 # Intervento TCS
+            self.state['accel'] -= 0.15  # Intervento TCS
 
         # ========================
         # FRENO
@@ -61,7 +63,7 @@ class OptimizedArcadeController:
         # ========================
         # Calcolo il limite di sterzo: a 150km/h lo sterzo massimo è molto ridotto
         steer_limit = max(0.15, 1.0 - (speed / 150.0))
-        
+
         if Key.left in self.keys:
             self.state['steer'] += self.steer_speed_in
         elif Key.right in self.keys:
@@ -82,6 +84,7 @@ class OptimizedArcadeController:
         self.state['accel'] = max(0.0, min(1.0, self.state['accel']))
         self.state['brake'] = max(0.0, min(1.0, self.state['brake']))
 
+
 # ============================================================
 # MAIN
 # ============================================================
@@ -95,13 +98,23 @@ def main():
     print("Arcade driving mode OTTIMIZZATO attivo")
     print("Frecce per guidare, W/S per marce. Timing di rete corretto.")
 
-    # CSV log
-    log_csv = open("manual_log.csv", "w")
+    # ==========================
+    # SETUP DATASET DIR & PATHS
+    # ==========================
+    if not os.path.exists("dataset"):
+        os.makedirs("dataset")
+
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    csv_path = os.path.join("dataset", f"manual_log_{timestamp}.csv")
+    json_path = os.path.join("dataset", f"manual_log_{timestamp}.json")
+
+    # CSV log (Ora usa la variabile dinamica)
+    log_csv = open(csv_path, "w")
     log_csv.write("time,steer,accel,brake,gear,speedX,trackPos,angle,rpm,damage\n")
 
     # JSON log
     log_json = []
-    
+
     t0 = time.time()
     step = 0
 
@@ -110,12 +123,12 @@ def main():
         # NESSUN TIME.SLEEP NECESSARIO
         S = client.S.d
         if not S:
-            break # Sicurezza se il server si spegne
+            break  # Sicurezza se il server si spegne
 
         # 2. Aggiorna la logica con i sensori attuali
         controller.update(S)
         a = controller.state
-        
+
         # 3. Prepara e invia la risposta
         client.R.d['steer'] = a['steer']
         client.R.d['accel'] = a['accel']
@@ -125,7 +138,7 @@ def main():
         client.R.d['meta'] = 0
 
         client.respond_to_server()
-        
+
         # 4. Chiama il blocco per il prossimo ciclo
         client.get_servers_input()
 
@@ -136,8 +149,8 @@ def main():
 
         log_csv.write(
             f"{current_time:.3f},{a['steer']:.3f},{a['accel']:.3f},{a['brake']:.3f},{a['gear']},"
-            f"{S.get('speedX',0):.2f},{S.get('trackPos',0):.3f},{S.get('angle',0):.3f},"
-            f"{S.get('rpm',0):.0f},{S.get('damage',0)}\n"
+            f"{S.get('speedX', 0):.2f},{S.get('trackPos', 0):.3f},{S.get('angle', 0):.3f},"
+            f"{S.get('rpm', 0):.0f},{S.get('damage', 0)}\n"
         )
 
         log_json.append({
@@ -159,9 +172,11 @@ def main():
 
         step += 1
 
+        # Salvataggio incrementale JSON (Ora usa la variabile dinamica json_path)
         if step % 200 == 0:
-            with open("manual_log.json", "w") as f:
+            with open(json_path, "w") as f:
                 json.dump(log_json, f, indent=2)
+
 
 if __name__ == "__main__":
     main()
