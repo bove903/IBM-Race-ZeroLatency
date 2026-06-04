@@ -1,20 +1,33 @@
 import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+import sys
+import time
 import torch
 import numpy as np
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
 import snakeoil3_gym as snakeoil3
 from train_bc import ActorCritic
+
+# Path assoluti (funzionano da qualsiasi directory)
+models_dir = os.path.join(parent_dir, "models")
+ppo_path = os.path.join(models_dir, "ppo_model.pth")
+bc_path = os.path.join(models_dir, "bc_model.pth")
+feat_mean_path = os.path.join(models_dir, "feat_mean.npy")
+feat_std_path = os.path.join(models_dir, "feat_std.npy")
 
 
 def extract_state(S, feat_mean, feat_std):
     trk = S.get('track', [100.0] * 19)
     if len(trk) < 19: trk += [100.0] * (19 - len(trk))
-
-    # Estrazione feature extra (compatibile con il nuovo schema a 26 feature)
     speed_y = S.get('speedY', 0.0)
     speed_z = S.get('speedZ', 0.0)
     wheels = S.get('wheelSpinVel', [0.0, 0.0, 0.0, 0.0])
     wheel_spin_avg = sum(wheels) / max(len(wheels), 1)
-
     raw = [
         S.get('speedX', 0.0), S.get('trackPos', 0.0),
         S.get('angle', 0.0), S.get('rpm', 0.0),
@@ -23,29 +36,67 @@ def extract_state(S, feat_mean, feat_std):
     return (np.array(raw, dtype=np.float32) - feat_mean) / feat_std
 
 
-def main():
-    print("🏎️ AGENTE ZERO LATENCY v2.0 (Ottimizzato Michigan)")
-    torch.set_num_threads(4)  # Efficienza CPU su Mac
-
-    model = ActorCritic()
-    model_path = 'models/ppo_model.pth' if os.path.exists('models/ppo_model.pth') else 'models/bc_model.pth'
-
-    model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
+def check_model_health(model, feat_mean, feat_std):
+    """Verifica che il modello acceleri da fermo in rettilineo."""
     model.eval()
-    print(f"✅ Modello {model_path} caricato.")
+    raw = np.array([0.0, 0.0, 0.0, 1000, 0, 0, 0] + [200.0]*19, dtype=np.float32)
+    x = torch.tensor((raw - feat_mean) / feat_std).unsqueeze(0)
+    with torch.no_grad():
+        actions, _ = model(x)
+    accel = actions[0, 1].item()
+    brake = actions[0, 2].item()
+    return accel > 0.3 and brake < 0.3  # Deve accelerare e non frenare
 
-    feat_mean = np.load("models/feat_mean.npy")
-    feat_std = np.load("models/feat_std.npy")
+
+def main():
+    print("🏎️ AGENTE ZERO LATENCY v3.0 (Laguna Seca)")
+    torch.set_num_threads(4)
+
+    feat_mean = np.load(feat_mean_path)
+    feat_std = np.load(feat_std_path)
+
+    # Carica modello con health check automatico
+    model = ActorCritic()
+
+    model_loaded = None
+    if os.path.exists(ppo_path):
+        model.load_state_dict(torch.load(ppo_path, map_location='cpu'))
+        if check_model_health(model, feat_mean, feat_std):
+            model_loaded = "PPO"
+            print(f"✅ Modello PPO caricato e verificato.")
+        else:
+            print(f"⚠️  Modello PPO CORROTTO (non accelera). Uso il BC...")
+
+    if model_loaded is None:
+        if os.path.exists(bc_path):
+            model.load_state_dict(torch.load(bc_path, map_location='cpu'))
+            if check_model_health(model, feat_mean, feat_std):
+                model_loaded = "BC"
+                print(f"✅ Modello BC caricato e verificato.")
+            else:
+                print("❌ Anche il modello BC è corrotto! Impossibile guidare.")
+                sys.exit(1)
+        else:
+            print("❌ Nessun modello trovato!")
+            sys.exit(1)
+
+    model.eval()
+
+    # Test rapido output modello
+    raw_test = np.array([0.0, 0.0, 0.0, 1000, 0, 0, 0] + [200.0]*19, dtype=np.float32)
+    x_test = torch.tensor((raw_test - feat_mean) / feat_std).unsqueeze(0)
+    with torch.no_grad():
+        act_test, _ = model(x_test)
+    print(f"   Test da fermo: Gas={act_test[0,1]:.2f} Freno={act_test[0,2]:.2f} Sterzo={act_test[0,0]:.2f}")
 
     client = snakeoil3.Client(p=3001, vision=False)
 
     tick_vuoti = 0
     tick_globale = 0
-
-    # Stato persistente per cambio marce e telemetria
     shift_cooldown = 0
     lap_speeds = []
     last_lap_time = 0.0
+    lap_start = time.time()
 
     try:
         while True:
@@ -65,68 +116,106 @@ def main():
             rpm = S.get('rpm', 0)
             gear = S.get('gear', 1)
 
-            # Inferenza Veloce
+            # Inferenza: Rete Neurale per le traiettorie
             s_t = torch.tensor(extract_state(S, feat_mean, feat_std)).unsqueeze(0)
             with torch.no_grad():
                 act_t, _ = model(s_t)
 
-            sterzo, accel, brake = act_t[0].numpy()
+            # SCELTA A: Il "Cervello Diviso"
+            # Ignoriamo accel e brake della rete neurale, teniamo solo lo sterzo
+            sterzo = act_t[0].numpy()[0]
+            
+            # --- ESTRAPOLAZIONE DATI FISICI ---
+            angle = S.get('angle', 0.0)
+            trk = S.get('track', [100.0] * 19)
+            if len(trk) < 19: trk += [100.0] * (19 - len(trk))
+            
+            # Usiamo i 3 sensori centrali per "vedere" più in profondità ed evitare di frenare troppo presto
+            max_forward = max(trk[8], trk[9], trk[10])
+            
+            # --- ALGORITMO PEDALI (Aggressivo) ---
+            # Ritardiamo la frenata chiedendo distanze minori per le alte velocità
+            if max_forward > 100.0: target_speed = 300.0
+            elif max_forward > 70.0: target_speed = 210.0
+            elif max_forward > 45.0: target_speed = 150.0
+            elif max_forward > 25.0: target_speed = 100.0
+            else: target_speed = 70.0
 
-            # === SAFETY LAYER INTELLIGENTE ===
-            # Override progressivo se troppo vicini al bordo pista
+            # Staccata per curve strette (Corkscrew e tornanti)
+            if abs(angle) > 0.10 and max_forward < 70.0:
+                target_speed = 50.0  # Più lento per il Corkscrew
+                
+            # Logica base Pedali
+            if speed_kmh < target_speed:
+                accel = 1.0
+                brake = 0.0
+            else:
+                accel = 0.0
+                # Freno ancora più duro (0.12) per staccate estreme all'ultimo metro
+                raw_brake = (speed_kmh - target_speed) * 0.12
+                steer_mag = abs(sterzo)
+                max_brake = max(0.1, 1.0 - (steer_mag * 1.8))
+                brake = min(raw_brake, max_brake)
+                
+            # TCS e Limiti Fisici
+            if speed_kmh < 15.0:
+                accel = 1.0
+                brake = 0.0
+
+            # === SAFETY LAYER (solo ad alta velocità) ===
             abs_track_pos = abs(track_pos)
-            if abs_track_pos > 0.85:
-                # Fattore di sicurezza crescente (0.0 a 0.85, 1.0 a 1.0)
+            if abs_track_pos > 0.85 and speed_kmh > 80:
                 safety_factor = min(1.0, (abs_track_pos - 0.85) / 0.15)
-                # Riduce gas proporzionalmente
-                accel *= (1.0 - safety_factor * 0.7)
-                # Aggiunge correzione sterzo verso il centro
+                accel *= (1.0 - safety_factor * 0.5)
                 center_correction = -np.sign(track_pos) * safety_factor * 0.3
                 sterzo += center_correction
-                # Frenata di emergenza se molto fuori
-                if abs_track_pos > 0.92:
-                    brake = max(brake, safety_factor * 0.4)
+                if abs_track_pos > 0.95:
+                    brake = max(brake, safety_factor * 0.3)
 
-            # === ANTI-SPIN TCS (Traction Control) ===
+            # === TCS (Traction Control System) ===
             wheels = S.get('wheelSpinVel', [0, 0, 0, 0])
             wheel_slip = (wheels[2] + wheels[3]) - (wheels[0] + wheels[1])
             if wheel_slip > 8.0:
-                accel = max(0.0, accel - 0.3)
+                accel = max(0.0, accel - 0.4) 
 
-            # Sicurezza ed Esecuzione
+            # Esecuzione
             client.R.d['steer'] = float(np.clip(sterzo, -1.0, 1.0))
             client.R.d['accel'] = float(np.clip(accel, 0.0, 1.0))
 
-            # === ABS & Filtro Freno ===
-            # Evita bloccaggio ruote anteriori in curva (sottosterzo e dritto)
+            # ABS
             steer_mag = abs(sterzo)
-            if steer_mag > 0.05:
-                max_brake = max(0.05, 1.0 - (steer_mag * 3.0))
+            if steer_mag > 0.1:
+                max_brake = max(0.2, 1.0 - (steer_mag * 1.5))
                 brake = min(brake, max_brake)
 
             brake = float(np.clip(brake, 0.0, 1.0))
             brake_threshold = 0.01 if speed_kmh > 100 else 0.03
             client.R.d['brake'] = brake if brake > brake_threshold else 0.0
 
-            # === LOGICA CAMBIO — ALLINEATA AL TRAINING DATA ===
-            # FIX CRITICO: soglie RPM identiche a collect_data.py e train_rl.py
+            # === CAMBIO MARCE ===
             if shift_cooldown > 0:
                 shift_cooldown -= 1
-
-            if speed_kmh < 20:
+            
+            # Impediamo all'auto di mettere la 1a a meno che non sia quasi ferma
+            if speed_kmh < 25:
                 gear = 1
             elif shift_cooldown == 0:
-                if gear < 6 and rpm > 16000:
+                if gear < 6 and rpm > 16500:
                     gear += 1
                     shift_cooldown = 5
-                elif gear > 1 and rpm < 7000:
+                # Scaliamo in 2a solo se i giri scendono sotto 6000
+                elif gear > 2 and rpm < 6000:
+                    gear -= 1
+                    shift_cooldown = 5
+                # Scaliamo in 1a solo se i giri in 2a scendono sotto i 4000
+                elif gear == 2 and rpm < 4000:
                     gear -= 1
                     shift_cooldown = 5
             client.R.d['gear'] = gear
 
             client.respond_to_server()
 
-            # === TELEMETRIA AVANZATA ===
+            # === TELEMETRIA ===
             lap_speeds.append(speed_kmh)
             cur_lap_time = S.get('lastLapTime', 0.0)
             if cur_lap_time > 0 and cur_lap_time != last_lap_time:
@@ -134,13 +223,15 @@ def main():
                 print(f"\n🏁 GIRO COMPLETATO! Tempo: {cur_lap_time:.2f}s | V media: {avg_speed:.0f} km/h")
                 last_lap_time = cur_lap_time
                 lap_speeds = []
+                lap_start = time.time()
 
             tick_globale += 1
             if tick_globale % 10 == 0:
+                elapsed = time.time() - lap_start
                 safety_str = "⚠️" if abs_track_pos > 0.85 else "✅"
                 tcs_str = "🔴TCS" if wheel_slip > 8.0 else ""
                 print(
-                    f"\r🤖 {safety_str} | St:{sterzo:+.2f} Gas:{accel:.2f} Fr:{brake:.2f} M:{gear} V:{speed_kmh:.0f}km/h Pos:{track_pos:+.2f} {tcs_str}",
+                    f"\r🤖 {safety_str} | St:{sterzo:+.2f} Gas:{accel:.2f} Fr:{brake:.2f} M:{gear} V:{speed_kmh:.0f}km/h Pos:{track_pos:+.2f} T:{elapsed:.0f}s {tcs_str}",
                     end="")
 
     except KeyboardInterrupt:
@@ -154,7 +245,7 @@ def main():
             pass
         if lap_speeds:
             print(f"   Velocità media ultimo stint: {np.mean(lap_speeds):.0f} km/h")
-        print("   Comandi azzerati. Spegnimento completato.")
+        print("   Spegnimento completato.")
 
 
 if __name__ == "__main__":

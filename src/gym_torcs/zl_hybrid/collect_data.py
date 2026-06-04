@@ -18,6 +18,7 @@ os.makedirs(dataset_dir, exist_ok=True)
 master_file = os.path.join(dataset_dir, "master_dataset.csv")
 
 class RaceFinished(Exception): pass
+class BotStuck(Exception): pass
 
 def drive_and_record(c, session_data, t0, start_damage, bot_state):
     S, R = c.S.d, c.R.d
@@ -39,6 +40,34 @@ def drive_and_record(c, session_data, t0, start_damage, bot_state):
     speed_z = S.get('speedZ', 0.0)
     wheels = S.get('wheelSpinVel', [0, 0, 0, 0])
     wheel_spin_avg = float(np.mean(wheels))
+
+    # ============================================================
+    # PROTEZIONE 1: Fuoripista → segnala immediatamente
+    # ============================================================
+    is_on_track = abs(track_pos) < 1.0
+
+    # ============================================================
+    # PROTEZIONE 2: Auto bloccata → conta i secondi ferma
+    # ============================================================
+    if abs(speed_kmh) < 5.0:
+        bot_state['stuck_frames'] = bot_state.get('stuck_frames', 0) + 1
+    else:
+        bot_state['stuck_frames'] = 0
+
+    # Se ferma per più di 200 frame (~10 secondi) → termina
+    if bot_state['stuck_frames'] > 200:
+        raise BotStuck("Auto ferma da troppo tempo!")
+
+    # ============================================================
+    # PROTEZIONE 3: Fuoripista per più di 100 frame → termina
+    # ============================================================
+    if not is_on_track:
+        bot_state['offtrack_frames'] = bot_state.get('offtrack_frames', 0) + 1
+    else:
+        bot_state['offtrack_frames'] = 0
+
+    if bot_state['offtrack_frames'] > 100:
+        raise BotStuck("Fuoripista da troppo tempo!")
 
     # STERZO ADATTIVO (Reattivo sui tornanti, stabile sull'ovale)
     steer_gain = max(6.0, 25.0 - (speed_kmh * 0.08))
@@ -104,53 +133,105 @@ def drive_and_record(c, session_data, t0, start_damage, bot_state):
 
     R['gear'] = gear
 
-    row_data = {
-        'time': time.time() - t0,
-        'steer': R['steer'],
-        'accel': R['accel'],
-        'brake': R['brake'],
-        'gear': R['gear'],
-        'speedX': speed_kmh,
-        'speedY': speed_y,
-        'speedZ': speed_z,
-        'trackPos': track_pos,
-        'angle': angle,
-        'rpm': rpm,
-        'wheelSpinAvg': wheel_spin_avg,
-        'damage': max(0, current_damage),
-    }
+    # ============================================================
+    # REGISTRA SOLO SE IN PISTA (filtro qualità dato)
+    # ============================================================
+    if is_on_track:
+        row_data = {
+            'time': time.time() - t0,
+            'steer': R['steer'],
+            'accel': R['accel'],
+            'brake': R['brake'],
+            'gear': R['gear'],
+            'speedX': speed_kmh,
+            'speedY': speed_y,
+            'speedZ': speed_z,
+            'trackPos': track_pos,
+            'angle': angle,
+            'rpm': rpm,
+            'wheelSpinAvg': wheel_spin_avg,
+            'damage': max(0, current_damage),
+        }
 
-    for i in range(19):
-        row_data[f'track_{i}'] = trk[i]
+        for i in range(19):
+            row_data[f'track_{i}'] = trk[i]
 
-    session_data.append(row_data)
+        session_data.append(row_data)
+        
     bot_state['prev_steer'] = R['steer']
+    return is_on_track
 
 
 if __name__ == "__main__":
     C = snakeoil3.Client(p=3001, vision=False)
     session_data = []
-    bot_state = {'shift_cooldown': 0, 'prev_steer': 0.0}
+    bot_state = {'shift_cooldown': 0, 'prev_steer': 0.0, 'stuck_frames': 0, 'offtrack_frames': 0}
+    last_autosave = 0
+    AUTOSAVE_EVERY = 50000  # Salva automaticamente ogni 50.000 frame
 
     print("\n🤖 Bot di raccolta dati avviato. In attesa di TORCS...")
+    print(f"   💾 Autosave ogni {AUTOSAVE_EVERY} frame per non perdere dati.")
     C.get_servers_input()
     t0 = time.time()
     start_damage = C.S.d.get('damage', 0) if C.S.d else 0
 
+    def append_to_master(data):
+        """Salva i dati accumulati nel CSV master (append)."""
+        if not data:
+            return
+        df = pd.DataFrame(data)
+        header_flag = not os.path.exists(master_file)
+        df.to_csv(master_file, mode='a', header=header_flag, index=False)
+        print(f"\n   💾 Autosave: {len(data)} frame scritti su disco. Totale: {sum(1 for _ in open(master_file)) - 1} righe.")
+
     try:
-        for step in range(C.maxSteps, 0, -1):
-            drive_and_record(C, session_data, t0, start_damage, bot_state)
-            C.respond_to_server()
-            C.get_servers_input()
+        while True:
+            try:
+                drive_and_record(C, session_data, t0, start_damage, bot_state)
+                C.respond_to_server()
+                C.get_servers_input()
+            except RaceFinished:
+                print("\n🏁 Gara terminata dal server.")
+                break
+            except BotStuck as e:
+                # Auto-reset: chiudi la connessione e aspetta che TORCS riparta il giro
+                print(f"\n⚠️  {e} — Auto-reset! Aspetto riavvio gara TORCS...")
+                try:
+                    C.R.d['meta'] = 1
+                    C.respond_to_server()
+                    C.shutdown()
+                except:
+                    pass
+                time.sleep(3)
+                # Riconnetti
+                try:
+                    C = snakeoil3.Client(p=3001, vision=False)
+                    C.get_servers_input()
+                    bot_state = {'shift_cooldown': 0, 'prev_steer': 0.0, 'stuck_frames': 0, 'offtrack_frames': 0}
+                    t0 = time.time()
+                    start_damage = C.S.d.get('damage', 0) if C.S.d else 0
+                    print("✅ Riconnesso! Raccolta dati ripresa.")
+                except Exception as e2:
+                    print(f"❌ Impossibile riconnettersi: {e2}. Premi INVIO dopo aver riavviato TORCS.")
+                    input()
+                continue
+            except Exception as e:
+                print(f"\n⚠️ Errore generico: {e}")
+                break
 
-            if step % 10 == 0 and len(session_data) > 0:
-                print(f"\r[Bot in azione] Buffer: {len(session_data)} tick | V: {session_data[-1]['speedX']:3.0f} km/h | Marcia: {session_data[-1]['gear']}", end="")
+            if len(session_data) % 10 == 0 and session_data:
+                last = session_data[-1]
+                on_track_str = "✅" if abs(last['trackPos']) < 0.8 else "⚠️ bordo"
+                print(f"\r[Bot] Frame: {len(session_data)} | V: {last['speedX']:3.0f} km/h | M: {last['gear']} | Accel: {last['accel']:.2f} | Brake: {last['brake']:.2f} | Pos: {last['trackPos']:+.2f} {on_track_str}", end="")
 
-        print("\n🏁 Raggiunto il limite massimo di step simulazione.")
-    except RaceFinished:
-        print("\n🏁 Il gioco ha chiuso la gara (o è stato messo in pausa/restart).")
+            # Autosave progressivo
+            if len(session_data) - last_autosave >= AUTOSAVE_EVERY:
+                nuovi = session_data[last_autosave:]
+                append_to_master(nuovi)
+                last_autosave = len(session_data)
+
     except KeyboardInterrupt:
-        print("\n⏹ Interruzione manuale da tastiera.")
+        print("\n⏹ Interruzione manuale.")
     finally:
         try:
             C.R.d.update({'steer': 0.0, 'accel': 0.0, 'brake': 1.0, 'gear': 0})
@@ -160,26 +241,23 @@ if __name__ == "__main__":
             pass
 
     print("\n" + "=" * 50)
-    print("SESSIONE AUTOMATICA TERMINATA.")
-    print(f"Frame raccolti : {len(session_data)}")
-    if len(session_data) > 0:
-        print(f"Danni subiti: {session_data[-1]['damage']}")
+    print(f"Frame raccolti in sessione: {len(session_data)}")
     print("=" * 50)
 
-    if len(session_data) < 100:
-        print("Sessione troppo breve. Dati scartati automaticamente.")
-        sys.exit()
+    # Salva i frame rimanenti non ancora scritti su disco
+    rimanenti = session_data[last_autosave:]
+    if len(rimanenti) >= 100:
+        while True:
+            choice = input(f"\nVuoi salvare i {len(rimanenti)} frame rimanenti? [y/n]: ").strip().lower()
+            if choice == 'y':
+                append_to_master(rimanenti)
+                print("-> SUCCESS!")
+                break
+            elif choice == 'n':
+                print("-> Scartati.")
+                break
+    elif last_autosave > 0:
+        print(f"-> Tutti i dati già salvati automaticamente ({last_autosave} frame totali).")
+    else:
+        print("Sessione troppo breve. Dati scartati.")
 
-    while True:
-        choice = input(f"Vuoi salvare i dati nel Master Dataset? [y/n]: ").strip().lower()
-        if choice == 'y':
-            df = pd.DataFrame(session_data)
-            header_flag = not os.path.exists(master_file)
-            df.to_csv(master_file, mode='a', header=header_flag, index=False)
-            print(f"-> SUCCESS: {len(session_data)} frame accodati con successo!")
-            break
-        elif choice == 'n':
-            print("-> Dati scartati. Memoria RAM svuotata.")
-            break
-        else:
-            print("Rispondi con 'y' per sì o 'n' per no.")
