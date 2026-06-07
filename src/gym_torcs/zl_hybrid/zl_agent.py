@@ -1,3 +1,10 @@
+"""
+Agente Autonomo Ibrido (Inference Script) - Team ZeroLatency
+Questo script carica il modello neurale addestrato (Behavioral Cloning)
+e lo utilizza per guidare il veicolo in tempo reale nel simulatore TORCS.
+Applica un "Safety Layer" deterministico (ABS, TCS, High-Speed Center Correction)
+per garantire stabilità e sicurezza ad alte velocità.
+"""
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 import sys
@@ -22,6 +29,18 @@ feat_std_path = os.path.join(models_dir, "feat_std.npy")
 
 
 def extract_state(S, feat_mean, feat_std):
+    """
+    Estrae le 26 features in tempo reale dal pacchetto UDP di TORCS
+    e le normalizza usando media e deviazione standard del dataset di training.
+    
+    Args:
+        S (dict): Dizionario di stato proveniente da TORCS.
+        feat_mean (np.ndarray): Array delle medie calcolate in fase di training.
+        feat_std (np.ndarray): Array delle deviazioni standard calcolate in fase di training.
+        
+    Returns:
+        np.ndarray: Vettore di stato normalizzato pronto per la Rete Neurale.
+    """
     trk = S.get('track', [100.0] * 19)
     if len(trk) < 19: trk += [100.0] * (19 - len(trk))
     speed_y = S.get('speedY', 0.0)
@@ -49,6 +68,12 @@ def check_model_health(model, feat_mean, feat_std):
 
 
 def main():
+    """
+    Ciclo di vita principale dell'Agente:
+    1. Carica la Rete Neurale (Pesi BC).
+    2. Istanzia il client UDP verso TORCS (snakeoil3).
+    3. Esegue un loop a ~50Hz: riceve sensori -> inferenza -> applica safety layer -> invia comandi.
+    """
     print("🏎️ AGENTE ZERO LATENCY v3.0 (Laguna Seca)")
     torch.set_num_threads(4)
 

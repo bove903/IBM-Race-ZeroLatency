@@ -1,3 +1,10 @@
+"""
+Deep Behavioral Cloning (Training Script) - Team ZeroLatency
+Questo script addestra l'architettura neurale ActorCritic utilizzando il dataset CSV
+generato dal Sistema Esperto. Sfrutta una funzione di Loss MSE pesata per penalizzare
+maggiormente gli errori di sterzata rispetto all'uso dei pedali, garantendo l'assenza
+di instabilità (zig-zag) durante l'inferenza ad alta velocità.
+"""
 import os
 import sys
 import numpy as np
@@ -26,6 +33,11 @@ INPUT_DIM = 26
 
 # --- ARCHITETTURA RETE ---
 class ActorCritic(nn.Module):
+    """
+    Rete Neurale Multi-Head per il controllo continuo del veicolo.
+    Un "backbone" condiviso estrae le feature stradali dai 26 sensori.
+    Le "Head" finali predicono indipendentemente sterzo, accelerazione e frenata.
+    """
     def __init__(self, input_dim=INPUT_DIM):
         super().__init__()
         self.shared = nn.Sequential(

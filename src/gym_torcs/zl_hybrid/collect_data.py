@@ -1,3 +1,10 @@
+"""
+Sistema Esperto (Data Collection Script) - Team ZeroLatency
+Questo script implementa un bot rule-based deterministico progettato
+per completare giri perfetti ad altissima velocità su TORCS.
+Il bot registra la telemetria (sensori) e le proprie azioni perfette (sterzo, gas, freno)
+salvandole in un dataset CSV (master_dataset.csv) usato per addestrare la Rete Neurale.
+"""
 import os
 import sys
 import time
@@ -23,6 +30,11 @@ class BotStuck(Exception): pass
 class LapCompleted(Exception): pass
 
 def drive_and_record(c, session_data, t0, start_damage, bot_state):
+    """
+    Funzione core del Sistema Esperto, chiamata ad ogni step di simulazione.
+    Calcola l'angolo di sterzo, l'accelerazione e la frenata ideali basati sulla fisica
+    e salva il frame corrente (sensori + azioni) nel buffer di sessione temporaneo.
+    """
     S, R = c.S.d, c.R.d
     if not S:
         raise RaceFinished()

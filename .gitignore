@@ -220,6 +220,3 @@ __marimo__/
 .idea/
 .DS_Store
 gym_torcs/vtorcs-RL-color/
-gym_torcs/dataset/
-src/gym_torcs/dataset/
-*.csv
