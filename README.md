@@ -1,6 +1,8 @@
 # 🏎️ ZeroLatency - Autonomous AI Racing Agent
 
-![ZeroLatency Logo](docs/images/logoZL.png)
+<p align="center">
+  <img src="docs/images/logoZL.png" width="300" alt="ZeroLatency Logo">
+</p>
 
 Welcome to the official repository of **Team ZeroLatency**. This project was developed for the **IBM Global AI Racing Competition** as part of the *Artificial Intelligence: Methods and Applications* course at the University of Salerno.
 
