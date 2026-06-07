@@ -70,12 +70,8 @@ def main():
     if model_loaded is None:
         if os.path.exists(bc_path):
             model.load_state_dict(torch.load(bc_path, map_location='cpu'))
-            if check_model_health(model, feat_mean, feat_std):
-                model_loaded = "BC"
-                print(f"✅ Modello BC caricato e verificato.")
-            else:
-                print("❌ Anche il modello BC è corrotto! Impossibile guidare.")
-                sys.exit(1)
+            model_loaded = "BC"
+            print(f"✅ Modello BC caricato (saltata la verifica di salute automatica).")
         else:
             print("❌ Nessun modello trovato!")
             sys.exit(1)
@@ -116,51 +112,12 @@ def main():
             rpm = S.get('rpm', 0)
             gear = S.get('gear', 1)
 
-            # Inferenza: Rete Neurale per le traiettorie
+            # Inferenza: Rete Neurale Pura
             s_t = torch.tensor(extract_state(S, feat_mean, feat_std)).unsqueeze(0)
             with torch.no_grad():
                 act_t, _ = model(s_t)
 
-            # SCELTA A: Il "Cervello Diviso"
-            # Ignoriamo accel e brake della rete neurale, teniamo solo lo sterzo
-            sterzo = act_t[0].numpy()[0]
-            
-            # --- ESTRAPOLAZIONE DATI FISICI ---
-            angle = S.get('angle', 0.0)
-            trk = S.get('track', [100.0] * 19)
-            if len(trk) < 19: trk += [100.0] * (19 - len(trk))
-            
-            # Usiamo i 3 sensori centrali per "vedere" più in profondità ed evitare di frenare troppo presto
-            max_forward = max(trk[8], trk[9], trk[10])
-            
-            # --- ALGORITMO PEDALI (Aggressivo) ---
-            # Ritardiamo la frenata chiedendo distanze minori per le alte velocità
-            if max_forward > 100.0: target_speed = 300.0
-            elif max_forward > 70.0: target_speed = 210.0
-            elif max_forward > 45.0: target_speed = 150.0
-            elif max_forward > 25.0: target_speed = 100.0
-            else: target_speed = 70.0
-
-            # Staccata per curve strette (Corkscrew e tornanti)
-            if abs(angle) > 0.10 and max_forward < 70.0:
-                target_speed = 50.0  # Più lento per il Corkscrew
-                
-            # Logica base Pedali
-            if speed_kmh < target_speed:
-                accel = 1.0
-                brake = 0.0
-            else:
-                accel = 0.0
-                # Freno ancora più duro (0.12) per staccate estreme all'ultimo metro
-                raw_brake = (speed_kmh - target_speed) * 0.12
-                steer_mag = abs(sterzo)
-                max_brake = max(0.1, 1.0 - (steer_mag * 1.8))
-                brake = min(raw_brake, max_brake)
-                
-            # TCS e Limiti Fisici
-            if speed_kmh < 15.0:
-                accel = 1.0
-                brake = 0.0
+            sterzo, accel, brake = act_t[0].numpy()
 
             # === SAFETY LAYER (solo ad alta velocità) ===
             abs_track_pos = abs(track_pos)

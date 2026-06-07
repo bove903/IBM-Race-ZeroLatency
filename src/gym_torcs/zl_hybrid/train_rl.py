@@ -37,25 +37,25 @@ MAX_GRAD_NORM = 0.5
 LR_ACTOR = 1e-5              # Leggermente più alto per imparare più in fretta
 LR_CRITIC = 3e-4
 
-# Esplorazione MOLTO bassa: il BC sa già guidare, serve solo raffinare
-INITIAL_LOG_STD = -3.5       # std ≈ 0.03
-FINAL_LOG_STD = -5.0         # std ≈ 0.007
+# Esplorazione ALTA: l'AI deve poter provare a staccare più tardi o accelerare di più
+INITIAL_LOG_STD = -2.3       # std ≈ 0.10 (10% di esplorazione)
+FINAL_LOG_STD = -4.0         # std ≈ 0.018
 
-# BC Anchor: FORTE e mai sotto 0.3 in Fase 1
-BC_ANCHOR_WEIGHT = 0.8
-BC_ANCHOR_MIN_PHASE1 = 0.5   # In fase 1 non scende sotto 0.5
-BC_ANCHOR_MIN_PHASE2 = 0.15  # In fase 2 può scendere di più
-BC_ANCHOR_DECAY = 0.998      # Lento e graduale
+# BC Anchor: DEBOLE per permettere di slegarsi dal 1:54
+BC_ANCHOR_WEIGHT = 0.4
+BC_ANCHOR_MIN_PHASE1 = 0.2   
+BC_ANCHOR_MIN_PHASE2 = 0.05  # A fine addestramento l'ancora sarà quasi inesistente
+BC_ANCHOR_DECAY = 0.95       # Decadimento rapido
 
-# Warm-up
-WARMUP_EPISODES = 10
+# Warm-up (Rapido)
+WARMUP_EPISODES = 2
 
 # Anti-camping
 MIN_SPEED_THRESHOLD = 5.0
 CAMPING_STEP_LIMIT = 50
 
 # Curriculum: soglia per passare da Fase 1 a Fase 2
-PHASE2_THRESHOLD_LAPS = 3    # Deve completare 3 giri prima di passare a Fase 2
+PHASE2_THRESHOLD_LAPS = 0    # L'agente sa già guidare, partiamo SUBITO con Fase 2 (Velocità)
 
 # Paths
 models_dir = os.path.join(parent_dir, "models")
@@ -183,10 +183,10 @@ def get_reward_phase2(S, prev_action=None):
     
     reward = (v_norm ** 2) * 5.0  
 
-    # 2. PENALITÀ Posizione (dolce al centro, severa ai bordi)
+    # 2. PENALITÀ Posizione (Ammorbidita per permettere i "tagli" sui cordoli)
     abs_tp = abs(trackPos)
-    if abs_tp > 0.8:
-        reward -= (abs_tp ** 2) * 10.0
+    if abs_tp > 1.0:
+        reward -= (abs_tp ** 2) * 5.0  # Penalizza solo se davvero oltre il cordolo
 
     # 3. PENALITÀ sterzate brusche
     if prev_action is not None:
@@ -313,11 +313,14 @@ def main():
 
     # CURRICULUM STATE
     completed_laps = 0
-    current_phase = 1
+    current_phase = 2 if PHASE2_THRESHOLD_LAPS == 0 else 1
     best_lap_time = float('inf')
 
     print(f"\n{'='*60}")
-    print(f"  📚 FASE 1 ATTIVA — Obiettivo: completare {PHASE2_THRESHOLD_LAPS} giri")
+    if current_phase == 1:
+        print(f"  📚 FASE 1 ATTIVA — Obiettivo: completare {PHASE2_THRESHOLD_LAPS} giri")
+    else:
+        print(f"  🏎️ FASE 2 ATTIVA — Velocità Massima!")
     print(f"{'='*60}")
 
     for episode in range(1, MAX_EPISODES + 1):
@@ -350,11 +353,8 @@ def main():
 
         # Accelerazione TORCS
         if torcs_just_restarted:
-            print("\n⏳ PREPARAZIONE (x2)...")
-            print("👉 CLICCA SULLA FINESTRA DI TORCS E LASCIALA IN PRIMO PIANO!")
-            for i in range(4, 0, -1):
-                print(f"  {i}...")
-                time.sleep(1)
+            print("\n⏳ PREPARAZIONE...")
+            time.sleep(1)
             torcs_just_restarted = False
 
         keyboard = Controller()
@@ -461,7 +461,7 @@ def main():
                 max_distance = max(max_distance, dist_now)
 
                 # Anti-camping
-                if speed_kmh < MIN_SPEED_THRESHOLD and step > 20:
+                if speed_kmh < MIN_SPEED_THRESHOLD and step > 50:
                     camping_counter += 1
                     if camping_counter > CAMPING_STEP_LIMIT:
                         r = -100.0
@@ -614,8 +614,8 @@ def main():
             else:
                 consecutive_bad = 0
 
-            if consecutive_bad >= 15:
-                print("🔴 15 episodi pessimi! Reset al BC...")
+            if consecutive_bad >= 30:
+                print("🔴 30 episodi pessimi! L'esplorazione si è spinta troppo oltre. Reset al BC...")
                 model.load_state_dict(torch.load(bc_model_path))
                 bc_anchor_weight = BC_ANCHOR_WEIGHT
                 consecutive_bad = 0
