@@ -1,6 +1,6 @@
 # 🏎️ ZeroLatency - Autonomous AI Racing Agent
 
-![ZeroLatency Logo](logoZL_pro.png)
+![ZeroLatency Logo](docs/images/logoZL.png)
 
 Welcome to the official repository of **Team ZeroLatency**. This project was developed for the **IBM Global AI Racing Competition** as part of the *Artificial Intelligence: Methods and Applications* course at the University of Salerno.
 
@@ -12,6 +12,31 @@ The system abandons traditional Reinforcement Learning in favor of a robust 3-st
 1. **Expert System (`collect_data.py`)**: A rule-based bot featuring high-speed PID steering, Traction Control System (TCS), and Anti-lock Braking System (ABS). It plays the game perfectly to generate training data.
 2. **Deep Behavioral Cloning (`train_bc.py`)**: A Multi-Head Neural Network (Actor-Critic backbone) trained on the expert's telemetry using a weighted Mean Squared Error (MSE) to prioritize steering accuracy.
 3. **Inference Agent (`zl_agent.py`)**: The final deployed agent. It runs the neural network in real-time at ~50Hz, shielded by a deterministic Safety Layer that intervenes only in critical out-of-bound or high-slip scenarios.
+
+---
+
+## 📂 Project Structure
+
+```text
+IBM-Race-ZeroLatency/
+├── README.md
+├── docs/
+│   ├── Report_Zero_Latency.pdf     # Official Technical Documentation
+│   └── images/
+│       └── logoZL.png              # Project Logo
+└── src/
+    └── gym_torcs/
+        ├── dataset/
+        │   └── master_dataset.csv  # Telemetry data collected by the Expert System
+        ├── models/
+        │   ├── bc_model.pth        # Pre-trained Neural Network weights
+        │   ├── feat_mean.npy       # Normalization mean values
+        │   └── feat_std.npy        # Normalization std values
+        └── zl_hybrid/
+            ├── collect_data.py     # Deterministic Expert System bot
+            ├── train_bc.py         # Behavioral Cloning Training script
+            └── zl_agent.py         # Main Autonomous Agent (Inference)
+```
 
 ---
 
