@@ -15,6 +15,11 @@ The system abandons traditional Reinforcement Learning in favor of a robust 3-st
 2. **Deep Behavioral Cloning (`train_bc.py`)**: A Multi-Head Neural Network (Actor-Critic backbone) trained on the expert's telemetry using a weighted Mean Squared Error (MSE) to prioritize steering accuracy.
 3. **Inference Agent (`zl_agent.py`)**: The final deployed agent. It runs the neural network in real-time at ~50Hz, shielded by a deterministic Safety Layer that intervenes only in critical out-of-bound or high-slip scenarios.
 
+### Why not Reinforcement Learning?
+Initially, the project included a traditional Reinforcement Learning script (`train_rl.py`). However, RL (specifically PPO) required millions of simulated steps to converge and suffered heavily from *catastrophic forgetting* when facing the harsh Laguna Seca corners. To overcome this, we built a deterministic expert system to generate a perfect "golden" dataset and switched to Behavioral Cloning, which drastically reduced training time and completely eliminated erratic behaviors.
+
+*(Note: We also left `collect_data_manual.py` in the repository for those who wish to try recording telemetry manually using the keyboard arrows, though the Expert System provides far superior datasets).*
+
 ---
 
 ## 📂 Project Structure
@@ -35,9 +40,11 @@ IBM-Race-ZeroLatency/
         │   ├── feat_mean.npy       # Normalization mean values
         │   └── feat_std.npy        # Normalization std values
         └── zl_hybrid/
-            ├── collect_data.py     # Deterministic Expert System bot
-            ├── train_bc.py         # Behavioral Cloning Training script
-            └── zl_agent.py         # Main Autonomous Agent (Inference)
+            ├── collect_data.py         # Deterministic Expert System bot
+            ├── collect_data_manual.py  # Manual keyboard telemetry recorder
+            ├── train_bc.py             # Behavioral Cloning Training script
+            ├── train_rl.py             # Legacy Reinforcement Learning script
+            └── zl_agent.py             # Main Autonomous Agent (Inference)
 ```
 
 ---
