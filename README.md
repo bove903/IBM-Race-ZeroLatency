@@ -4,7 +4,7 @@
   <img src="docs/images/logoZL.png" width="300" alt="ZeroLatency Logo">
 </p>
 
-Welcome to the official repository of **Team ZeroLatency**. This project was developed for the **IBM Global AI Racing Competition** as part of the *Artificial Intelligence: Methods and Applications* course at the University of Salerno.
+Welcome to the official repository of **Team ZeroLatency**. This project was developed for the **IBM Global AI Racing League** as part of the *Artificial Intelligence: Methods and Applications* course at the University of Salerno.
 
 Our project introduces a **Hybrid Autonomous Driving System** capable of achieving highly competitive lap times on the *Corkscrew* circuit in the TORCS simulator. By combining a Deterministic Expert System with Deep Behavioral Cloning, our agent achieved a record autonomous lap time of **1:43**.
 
@@ -16,7 +16,7 @@ The system abandons traditional Reinforcement Learning in favor of a robust 3-st
 3. **Inference Agent (`zl_agent.py`)**: The final deployed agent. It runs the neural network in real-time at ~50Hz, shielded by a deterministic Safety Layer that intervenes only in critical out-of-bound or high-slip scenarios.
 
 ### Why not Reinforcement Learning?
-Initially, the project included a traditional Reinforcement Learning script (`train_rl.py`). However, RL (specifically PPO) required millions of simulated steps to converge and suffered heavily from *catastrophic forgetting* when facing the harsh Laguna Seca corners. To overcome this, we built a deterministic expert system to generate a perfect "golden" dataset and switched to Behavioral Cloning, which drastically reduced training time and completely eliminated erratic behaviors.
+Initially, the project included a traditional Reinforcement Learning script (`train_rl.py`). However, RL (specifically PPO) required millions of simulated steps to converge and suffered heavily from *catastrophic forgetting* when facing the harsh Corkscrew corners. To overcome this, we built a deterministic expert system to generate a perfect "golden" dataset and switched to Behavioral Cloning, which drastically reduced training time and completely eliminated erratic behaviors.
 
 *(Note: We also left `collect_data_manual.py` in the repository for those who wish to try recording telemetry manually using the keyboard arrows, though the Expert System provides far superior datasets).*
 
@@ -54,7 +54,7 @@ IBM-Race-ZeroLatency/
 The project is fully compatible with both **macOS** and **Windows**.
 
 ### 1. The Simulator
-You must have the customized TORCS simulator installed (`vtorcs-RL-color` with the SCR Server plugin), as provided by the IBM competition guidelines.
+You must have the customized TORCS simulator installed (`vtorcs-RL-color` with the SCR Server plugin), as provided by the IBM AI Racing League guidelines.
 - **Mac/Linux:** Built via terminal `make` / `make install`.
 - **Windows:** Installed via the provided `.exe` installer.
 

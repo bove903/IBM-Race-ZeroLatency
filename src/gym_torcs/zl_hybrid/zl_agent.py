@@ -74,7 +74,7 @@ def main():
     2. Istanzia il client UDP verso TORCS (snakeoil3).
     3. Esegue un loop a ~50Hz: riceve sensori -> inferenza -> applica safety layer -> invia comandi.
     """
-    print("🏎️ AGENTE ZERO LATENCY v3.0 (Laguna Seca)")
+    print("🏎️ AGENTE ZERO LATENCY v3.0 (Corkscrew)")
     torch.set_num_threads(4)
 
     feat_mean = np.load(feat_mean_path)
