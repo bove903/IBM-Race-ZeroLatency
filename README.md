@@ -116,11 +116,11 @@ python src/gym_torcs/zl_hybrid/train_bc.py
 ---
 
 ## 👥 The Team
-- Christian Salvatore Bove
-- Marco Michele Dianò
-- Miriam Rosanova
-- Donato Finiello
-- Antonia Lucia Lamberti
+- ◽ [Bove Christian Salvatore](https://github.com/bove903)
+- ◽ [Dianò Marco Michele](https://github.com/marcodiano72)
+- ◽ [Rosanova Miriam](https://github.com/miriamrosanova)
+- ◽ [Finiello Donato](https://github.com/Dfiniello)
+- ◽ [Lamberti Antonia Lucia](https://github.com/lambertiantonia42-cmd)
 
 **Course:** Artificial Intelligence: Methods and Applications  
 **University:** Università degli Studi di Salerno (UNISA)
